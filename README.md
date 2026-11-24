@@ -1,6 +1,7 @@
 # Reconciling a Century of Baseball — A Lahman + Retrosheet Data Warehouse
 
 **Team 5 (Dead Ball Data):** Anthony Coggins
+
 **Course:** CSCI 7435 Data Warehousing, Georgia Southern University, Fall 2026
 
 This is a MySQL 8 dimensional warehouse that integrates the Lahman Baseball Database (season totals, 1871–2025) with Retrosheet play-by-play data (every plate appearance in 2014, 2018 and 2023). It's built as a fact constellation sharing conformed player and team dimensions.
