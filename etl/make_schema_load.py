@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+make_schema_load.py — write schema_load.sql: ONE SQL file that builds and loads
+the whole warehouse on a clean MySQL 8 instance, with no Python at load time.
+
+    python make_schema_load.py            (writes ../schema_load.sql)
+
+The generator reads the header of each source file in ./sources so that every
+LOAD DATA statement lists the file's real columns in their real order. The SQL
+it writes does exactly what run_etl.py does:
+
+  01_ddl -> 02_staging -> LOAD DATA LOCAL INFILE into staging (same lineage
+  columns, same blank -> NULL rule, same row numbering) -> steps 04..13 ->
+  CHECKSUM TABLE (compare with etl_output/table_checksums.txt).
+
+Run the generated file from the etl folder (paths are relative to it):
+
+    mysql --local-infile=1 -u root -p -t < ../schema_load.sql
+
+or, against the Docker container, with test_schema_load.py.
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import run_etl as R  # noqa: E402  (reuses the same mappings and park-file choice)
+
+STEPS = ["04_reference_and_unknown.sql", "05_load_dim_date_season.sql", "06_load_dim_player.sql",
+         "07_load_dim_team_scd2.sql", "08_load_dim_park.sql", "09_load_fact_player_season.sql",
+         "10_load_fact_plate_appearance.sql", "11_load_agg_pa_season_park.sql",
+         "12_load_fact_reconciliation.sql", "13_verify.sql"]
+CHECKSUM_TABLES = ("dim_date, dim_season, dim_player, dim_team, dim_park, dim_outcome, dim_game_type, "
+                   "dim_matchup, fact_player_season, fact_plate_appearance, fact_reconciliation, "
+                   "agg_pa_season_park, etl_reject")
+
+
+def file_format(path):
+    raw = open(path, "rb").read(1 << 20)
+    try:
+        raw.decode("utf-8")
+        charset = "utf8mb4"
+    except UnicodeDecodeError:
+        charset = "latin1"
+    first_nl = raw.find(b"\n")
+    eol = "\\r\\n" if first_nl > 0 and raw[first_nl - 1:first_nl] == b"\r" else "\\n"
+    return charset, eol
+
+
+def sql_str(s):
+    return "'" + s.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def load_block(table, path, src_root, assignments, ncols):
+    """assignments: list of (staging column, source column index or None)."""
+    rel = os.path.relpath(path, src_root).replace("\\", "/")
+    infile = "sources/" + rel
+    charset, eol = file_format(path)
+    vars_ = ", ".join(f"@c{i}" for i in range(ncols))
+    sets = [f"source_file = {sql_str(rel)}", "source_row = (@r := @r + 1)"]
+    for col, i in assignments:
+        sets.append(f"{col} = " + (f"NULLIF(TRIM(@c{i}), '')" if i is not None else "NULL"))
+    return (f"-- {rel} -> {table}\n"
+            f"SET @r := 0;\n"
+            f"LOAD DATA LOCAL INFILE {sql_str(infile)}\n"
+            f"INTO TABLE {table}\n"
+            f"CHARACTER SET {charset}\n"
+            f"FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' ESCAPED BY ''\n"
+            f"LINES TERMINATED BY '{eol}'\n"
+            f"IGNORE 1 LINES\n"
+            f"({vars_})\n"
+            f"SET " + ",\n    ".join(sets) + ";\n"
+            f"INSERT INTO etl_source_audit (source_file, staging_table, file_rows) "
+            f"VALUES ({sql_str(rel)}, '{table}', @r);\n")
+
+
+def main():
+    src_root = os.path.join(HERE, "sources")
+    out_path = os.path.abspath(sys.argv[1]) if len(sys.argv) > 1 else os.path.join(HERE, "..", "schema_load.sql")
+    blocks = []
+    sites = set()
+    for table, mapping, path in R.source_files(src_root):
+        header, reader = R.read_csv(path)
+        idx = {R.norm(h): i for i, h in enumerate(header)}
+        missing = [src for _, src, req in mapping if req and R.norm(src) not in idx]
+        if missing:
+            sys.exit(f"{path} is missing required column(s): {', '.join(missing)}")
+        blocks.append(load_block(table, path, src_root,
+                                 [(stg, idx.get(R.norm(src))) for stg, src, _ in mapping], len(header)))
+        if table == "stg_retro_plays":
+            si = idx[R.norm("site")]
+            sites |= {r[si].strip().upper() for r in reader if si < len(r) and r[si].strip()}
+    pc = R.choose_park_source(src_root, sites)
+    if pc:
+        blocks.append(load_block("stg_park_lookup", pc["path"], src_root,
+                                 [("park_code", pc["code"]), ("park_name", pc["name"]), ("city", pc["city"]),
+                                  ("state", pc["state"]), ("country", pc["country"])], len(pc["header"])))
+    else:
+        blocks.append("-- No park lookup file covers the Retrosheet site codes; parks load as site codes only.\n")
+
+    def sql_file(name):
+        with open(os.path.join(R.SQL_DIR, name), encoding="utf-8") as f:
+            return f"-- ===== {name} =====\n" + f.read().strip() + "\n"
+
+    parts = [
+        "-- =============================================================================\n"
+        "-- Team 5 (Dead Ball Data) — schema_load.sql\n"
+        "-- Builds AND loads the baseball_dw warehouse on a clean MySQL 8 instance.\n"
+        "-- Generated by etl/make_schema_load.py from the source-file headers.\n"
+        "--\n"
+        "-- Before running: source files in etl/sources/ (python etl/get_sources.py\n"
+        "-- downloads Retrosheet; Lahman CSVs are in the repository).\n"
+        "-- Run from the etl folder, so the relative file paths resolve:\n"
+        "--     cd etl\n"
+        "--     mysql --local-infile=1 -u root -p -t < ../schema_load.sql\n"
+        "-- The script ends with CHECKSUM TABLE; the values match\n"
+        "-- etl_output/table_checksums.txt written by run_etl.py on the same sources.\n"
+        "-- =============================================================================\n"
+        "SET GLOBAL local_infile = 1;\n"
+        "SET SESSION sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,"
+        "ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';\n"
+        "SET SESSION lc_time_names = 'en_US';\n",
+        sql_file("01_ddl.sql"),
+        sql_file("02_staging.sql"),
+        "-- ===== 03 staging: load each source file unaltered (blank -> NULL), with lineage =====\n"
+        "USE baseball_dw;\n" + "\n".join(blocks),
+    ] + [sql_file(s) for s in STEPS] + [
+        "-- ===== Determinism evidence =====\n"
+        f"CHECKSUM TABLE {CHECKSUM_TABLES};\n"
+    ]
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(parts))
+    print(f"Wrote {out_path}")
+
+
+if __name__ == "__main__":
+    main()

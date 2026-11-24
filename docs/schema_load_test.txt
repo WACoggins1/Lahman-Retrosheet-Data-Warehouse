@@ -1,0 +1,22 @@
+[1/5] starting a clean MySQL 8.4 container 'dw-clean' ...
+      ready after 9s
+[2/5] copying sources and schema_load.sql into the container ...
+[3/5] running schema_load.sql on the clean instance ...
+      finished in 82s
+[4/5] comparing table checksums with run_etl.py ...
+      baseball_dw.dim_date                    605467703     605467703  same
+      baseball_dw.dim_season                 1725721095    1725721095  same
+      baseball_dw.dim_player                 2581690859    2581690859  same
+      baseball_dw.dim_team                   3359005459    3359005459  same
+      baseball_dw.dim_park                   3434669693    3434669693  same
+      baseball_dw.dim_outcome                3007992796    3007992796  same
+      baseball_dw.dim_game_type              1677307045    1677307045  same
+      baseball_dw.dim_matchup                2506491026    2506491026  same
+      baseball_dw.fact_player_season         1418601866    1418601866  same
+      baseball_dw.fact_plate_appearance      2250143467    2250143467  same
+      baseball_dw.fact_reconciliation        2223240944    2223240944  same
+      baseball_dw.agg_pa_season_park         3267605978    3267605978  same
+      baseball_dw.etl_reject                 1227470861    1227470861  same
+[5/5] removing container 'dw-clean'
+
+RESULT: schema_load.sql on a clean MySQL 8 instance reproduces every table exactly (CHECKSUM TABLE identical to run_etl.py).

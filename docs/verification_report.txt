@@ -1,0 +1,274 @@
+
+[connect] MySQL root@127.0.0.1:3307
+  server version 8.4.13
+
+[build]
+  ok  01_ddl.sql  (0.8s)
+  ok  02_staging.sql  (0.2s)
+  staged stg_lahman_people       24,270 rows  <- lahman/People.csv
+  staged stg_lahman_batting     128,598 rows  <- lahman/Batting.csv
+  staged stg_lahman_teams         3,614 rows  <- lahman/Teams.csv
+  staged stg_retro_plays        195,533 rows  <- retrosheet/2014/2014plays.csv
+  staged stg_retro_plays        197,078 rows  <- retrosheet/2018/2018plays.csv
+  staged stg_retro_plays        194,350 rows  <- retrosheet/2023/2023plays.csv
+  staged stg_park_lookup            345 rows  <- lahman/Parks.csv (column 'parkkey' matches 100% of site codes)
+  ok  staging  (43.3s)
+  ok  04_reference_and_unknown.sql  (0.9s)
+  ok  05_load_dim_date_season.sql  (2.3s)
+  ok  06_load_dim_player.sql  (1.6s)
+  ok  07_load_dim_team_scd2.sql  (1.0s)
+  ok  08_load_dim_park.sql  (1.0s)
+  ok  09_load_fact_player_season.sql  (5.3s)
+  ok  10_load_fact_plate_appearance.sql  (35.7s)
+  ok  11_load_agg_pa_season_park.sql  (2.0s)
+  ok  12_load_fact_reconciliation.sql  (1.7s)
+
+-- Source file -> staging -> warehouse row counts
++--------------------+-------+------------------+--------------+-----------------+-----------------------+-----------------------+-------------+---------------+----------+
+| staging_table      | files | source_file_rows | staging_rows | file_eq_staging | warehouse_table       | warehouse_source_rows | loaded_rows | rejected_rows | balanced |
++--------------------+-------+------------------+--------------+-----------------+-----------------------+-----------------------+-------------+---------------+----------+
+| stg_lahman_batting | 1     | 128598           | 128598       | YES             | fact_player_season    | 128598                | 128598      | 0             | YES      |
+| stg_lahman_people  | 1     | 24270            | 24270        | YES             | dim_player            | 24270                 | 24270       | 0             | YES      |
+| stg_lahman_teams   | 1     | 3614             | 3614         | YES             | dim_team              | 3614                  | 3614        | 0             | YES      |
+| stg_park_lookup    | 1     | 345              | 345          | YES             | dim_park              | 345                   | 345         | 0             | YES      |
+| stg_retro_plays    | 3     | 586961           | 586961       | YES             | fact_plate_appearance | 586961                | 561532      | 25429         | YES      |
++--------------------+-------+------------------+--------------+-----------------+-----------------------+-----------------------+-------------+---------------+----------+
+5 rows in set
+
+-- Totals check — summary table and reconciliation fact match the base facts
++------------------------------------------------------------------------------------+---------------+------------+-----+
+| check_name                                                                         | derived_total | base_total | ok  |
++------------------------------------------------------------------------------------+---------------+------------+-----+
+| agg_pa_season_park.pa_count = SUM(fact_plate_appearance.pa_count)                  | 561532        | 561532     | YES |
+| agg_pa_season_park.home_run = SUM(fact_plate_appearance.home_run)                  | 15890         | 15890      | YES |
+| agg_pa_season_park.batted_ball = SUM(fact_plate_appearance.batted_ball)            | 386930        | 386930     | YES |
+| fact_reconciliation lahman H = fact_player_season hits (Retrosheet seasons)        | 123452        | 123452     | YES |
+| fact_reconciliation retro official H = fact_plate_appearance hits (official games) | 123452        | 123452     | YES |
++------------------------------------------------------------------------------------+---------------+------------+-----+
+5 rows in set
+
+-- Grain check — fact_reconciliation (expect 0 rows)
++------------+------------+--------------+---+
+| player_key | season_key | measure_code | n |
++------------+------------+--------------+---+
++------------+------------+--------------+---+
+0 rows in set
+
+-- Grain check — agg_pa_season_park (expect 0 rows)
++------------+----------+---------------+---+
+| season_key | park_key | game_type_key | n |
++------------+----------+---------------+---+
++------------+----------+---------------+---+
+0 rows in set
+
+-- Load reconciliation (source rows = loaded rows + rejected rows)
++-----------------------+-------------+-------------+---------------+----------+-----------------------------------------------------------------------------------------------+
+| target_table          | source_rows | loaded_rows | rejected_rows | balanced | source_definition                                                                             |
++-----------------------+-------------+-------------+---------------+----------+-----------------------------------------------------------------------------------------------+
+| dim_date              | 56613       | 56613       | 0             | YES      | Calendar days 1871-01-01 to 2025-12-31                                                        |
+| dim_game_type         | 7           | 7           | 0             | YES      | Seeded game types plus unseen codes found in plays                                            |
+| dim_matchup           | 12          | 12          | 0             | YES      | Batter hand (L,R,B,?) x pitcher hand (L,R,?)                                                  |
+| dim_outcome           | 16          | 16          | 0             | YES      | Seeded outcome codes (step 04)                                                                |
+| dim_park              | 345         | 345         | 0             | YES      | Park lookup rows plus Retrosheet site codes absent from the lookup                            |
+| dim_player            | 24270       | 24270       | 0             | YES      | Lahman People.csv rows                                                                        |
+| dim_season            | 155         | 155         | 0             | YES      | Seasons 1871 to 2025                                                                          |
+| dim_team              | 3614        | 3614        | 0             | YES      | Lahman Teams.csv team-season rows; loaded = team-seasons assigned to one of 408 SCD2 versions |
+| fact_plate_appearance | 586961      | 561532      | 25429         | YES      | Retrosheet plays.csv rows, 2014 + 2018 + 2023                                                 |
+| fact_player_season    | 128598      | 128598      | 0             | YES      | Lahman Batting.csv rows                                                                       |
++-----------------------+-------------+-------------+---------------+----------+-----------------------------------------------------------------------------------------------+
+10 rows in set
+
+-- Grain check — fact_player_season (expect 0 rows)
++------------+------------+-------+---+
+| player_key | season_key | stint | n |
++------------+------------+-------+---+
++------------+------------+-------+---+
+0 rows in set
+
+-- Grain check — fact_plate_appearance (expect 0 rows)
++---------+----------+---+
+| game_id | play_num | n |
++---------+----------+---+
++---------+----------+---+
+0 rows in set
+
+-- Orphan check — fact_player_season.player_key -> dim_player
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_player_season.season_key -> dim_season
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_player_season.team_key -> dim_team
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.date_key -> dim_date
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.batter_key -> dim_player
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.pitcher_key -> dim_player
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.bat_team_key -> dim_team
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.fld_team_key -> dim_team
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.park_key -> dim_park
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.outcome_key -> dim_outcome
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.game_type_key -> dim_game_type
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_plate_appearance.matchup_key -> dim_matchup
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_reconciliation.player_key -> dim_player
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — fact_reconciliation.season_key -> dim_season
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — agg_pa_season_park.season_key -> dim_season
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — agg_pa_season_park.park_key -> dim_park
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Orphan check — agg_pa_season_park.game_type_key -> dim_game_type
++-------------+
+| orphan_rows |
++-------------+
+| 0           |
++-------------+
+1 row in set
+
+-- Rejected rows by table and reason
++-----------------------+----------------------+---------------+
+| target_table          | reason_code          | rejected_rows |
++-----------------------+----------------------+---------------+
+| fact_plate_appearance | NOT_PLATE_APPEARANCE | 25429         |
++-----------------------+----------------------+---------------+
+1 row in set
+
+-- Data-quality summary
++------------------------------+--------+---------------------------------------------------------------------------+
+| metric                       | value  | description                                                               |
++------------------------------+--------+---------------------------------------------------------------------------+
+| ambiguous_retro_team_codes   | 1      | Season + Retrosheet team code pairs matching more than one team           |
+| batting_rows_pre1954         | 48344  | Lahman Batting rows before 1954                                           |
+| duplicate_retro_ids          | 21     | Retrosheet IDs shared by more than one People row                         |
+| franchise_seasons_multi_team | 1      | Franchise-seasons with two or more team rows (mapped to one SCD2 version) |
+| franchises_with_history      | 71     | Franchises with more than one SCD2 version                                |
+| not_pa_rows                  | 25429  | Retrosheet rows that are not plate appearances (pa = 0)                   |
+| pa_era_rule_applied          | 46363  | Rows whose PA used the era-aware rule (an unrecorded component added 0)   |
+| pa_left_null                 | 301    | Rows where PA could not be derived and stays NULL                         |
+| pa_unknown_bat_team          | 235    | Plate appearances assigned the Unknown batting team                       |
+| pa_unknown_batter            | 0      | Plate appearances assigned the Unknown batter                             |
+| pa_unknown_date              | 0      | Plate appearances with an unparseable date                                |
+| pa_unknown_outcome           | 0      | Plate appearances with no recognised outcome flag                         |
+| pa_unknown_pitcher           | 0      | Plate appearances assigned the Unknown pitcher                            |
+| parks_region_is_country      | 1      | Parks with no state/province: Region level repeats the country            |
+| parks_without_attributes     | 0      | Park codes in plays not found in the park lookup                          |
+| people_without_retro_id      | 897    | dim_player members with no Retrosheet ID                                  |
+| plays_rows                   | 586961 | Retrosheet plays rows staged                                              |
+| ps_unknown_team              | 0      | Player-season rows assigned the Unknown team                              |
+| seasons_sf_not_recorded      | 83     | Seasons where SF was not a recorded category (blank in most rows)         |
+| sf_blank_all                 | 46664  | Batting.SF blank, all seasons                                             |
+| sf_blank_pre1954             | 46664  | Batting.SF blank, seasons before 1954                                     |
+| team_seasons_code_differs    | 408    | Team-seasons where Lahman teamID differs from teamIDretro                 |
+| team_versions                | 408    | dim_team SCD2 versions                                                    |
+| tiebreaker_pa_rows           | 137    | Plate appearances in Retrosheet playoff (tiebreaker) games                |
++------------------------------+--------+---------------------------------------------------------------------------+
+24 rows in set
+  ok  13_verify.sql  (6.9s)
+
+  DETERMINISM: table checksums identical to the previous run
+
+========================================================================
+Finished in 105s. ALL CHECKS PASSED: every table balances, grain checks return 0 rows, orphan checks return 0.

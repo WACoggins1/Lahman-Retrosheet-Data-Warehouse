@@ -1,0 +1,1 @@
+Wrote E:\Data Warehousing Baseball\M3_Package\M3_Package\repo\etl\..\schema_load.sql

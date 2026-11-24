@@ -1,0 +1,8 @@
+# Retrosheet files are downloaded by etl/get_sources.py, not stored in the repo
+etl/sources/retrosheet/
+etl/sources/**/*.zip
+# Python
+__pycache__/
+*.pyc
+# Large local outputs
+etl/etl_output/schema_load_output.txt

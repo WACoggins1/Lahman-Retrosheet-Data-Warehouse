@@ -1,0 +1,13 @@
+baseball_dw.dim_date	605467703
+baseball_dw.dim_season	1725721095
+baseball_dw.dim_player	2581690859
+baseball_dw.dim_team	3359005459
+baseball_dw.dim_park	3434669693
+baseball_dw.dim_outcome	3007992796
+baseball_dw.dim_game_type	1677307045
+baseball_dw.dim_matchup	2506491026
+baseball_dw.fact_player_season	1418601866
+baseball_dw.fact_plate_appearance	2250143467
+baseball_dw.fact_reconciliation	2223240944
+baseball_dw.agg_pa_season_park	3267605978
+baseball_dw.etl_reject	1227470861
