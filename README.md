@@ -1,4 +1,4 @@
-# Reconciling a Century of Baseball — a Lahman + Retrosheet data warehouse
+# Reconciling a Century of Baseball — A Lahman + Retrosheet Data Warehouse
 
 **Team 5 (Dead Ball Data):** Anthony Coggins
 **Course:** CSCI 7435 Data Warehousing, Georgia Southern University, Fall 2026
